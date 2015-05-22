@@ -21,12 +21,13 @@ import static com.android.internal.telephony.RILConstants.*;
 
 import android.content.Context;
 import android.os.AsyncResult;
+import android.os.Handler;
 import android.os.Message;
 import android.os.Parcel;
+import android.os.Registrant;
 import android.telephony.Rlog;
 
 import android.telephony.PhoneNumberUtils;
-
 
 public class SamsungExynos4RIL extends RIL implements CommandsInterface {
 
@@ -114,21 +115,24 @@ public class SamsungExynos4RIL extends RIL implements CommandsInterface {
     static final int RIL_UNSOL_UTS_GET_UNREAD_SMS_STATUS = 11031;
     static final int RIL_UNSOL_MIP_CONNECT_STATUS = 11032;
 
-    public SamsungExynos4RIL(Context context, int preferredNetworkType,
-            int cdmaSubscription, Integer instanceId) {
-        super(context, preferredNetworkType, cdmaSubscription, instanceId);
+    private Object mCatProCmdBuffer;
+    /* private Message mPendingGetSimStatus; */
+
+    public SamsungExynos4RIL(Context context, int networkMode, int cdmaSubscription, Integer instanceId) {
+        super(context, networkMode, cdmaSubscription, instanceId);
+        mQANElements = 5;
     }
 
     static String
     requestToString(int request) {
         switch (request) {
-            case RIL_REQUEST_DIAL_EMERGENCY: return "DIAL_EMERGENCY"; // We want to take care of this
-            default: return RIL.requestToString(request); // Everything else comes from super class
+            case RIL_REQUEST_DIAL_EMERGENCY: return "DIAL_EMERGENCY";
+            default: return RIL.requestToString(request);
         }
     }
 
-    protected RILRequest
-    processSolicited (Parcel p) {
+    @Override
+    protected RILRequest processSolicited (Parcel p) {
         int serial, error;
         boolean found = false;
 
@@ -155,11 +159,6 @@ public class SamsungExynos4RIL extends RIL implements CommandsInterface {
  | egrep "^ *{RIL_" \
  | sed -re 's/\{([^,]+),[^,]+,([^}]+).+/case \1: ret = \2(p); break;/'
              */
-
-            // We want to take care of this
-            case RIL_REQUEST_DIAL_EMERGENCY: ret = responseVoid(p); break;
-
-            // Everything below comes from super class
             case RIL_REQUEST_GET_SIM_STATUS: ret =  responseIccCardStatus(p); break;
             case RIL_REQUEST_ENTER_SIM_PIN: ret =  responseInts(p); break;
             case RIL_REQUEST_ENTER_SIM_PUK: ret =  responseInts(p); break;
@@ -170,6 +169,7 @@ public class SamsungExynos4RIL extends RIL implements CommandsInterface {
             case RIL_REQUEST_ENTER_DEPERSONALIZATION_CODE: ret =  responseInts(p); break;
             case RIL_REQUEST_GET_CURRENT_CALLS: ret =  responseCallList(p); break;
             case RIL_REQUEST_DIAL: ret =  responseVoid(p); break;
+            case RIL_REQUEST_DIAL_EMERGENCY: ret =  responseVoid(p); break;
             case RIL_REQUEST_GET_IMSI: ret =  responseString(p); break;
             case RIL_REQUEST_HANGUP: ret =  responseVoid(p); break;
             case RIL_REQUEST_HANGUP_WAITING_OR_BACKGROUND: ret =  responseVoid(p); break;
@@ -359,7 +359,6 @@ public class SamsungExynos4RIL extends RIL implements CommandsInterface {
 
             rr.onError(error, ret);
         } else {
-
             if (RILJ_LOGD) riljLog(rr.serialString() + "< " + requestToString(rr.mRequest)
                     + " " + retToString(rr.mRequest, ret));
 
@@ -368,20 +367,18 @@ public class SamsungExynos4RIL extends RIL implements CommandsInterface {
                 rr.mResult.sendToTarget();
             }
         }
+
         return rr;
     }
 
     @Override
     public void
     dial(String address, int clirMode, UUSInfo uusInfo, Message result) {
-
-        // We want to take care of this
         if (PhoneNumberUtils.isEmergencyNumber(address)) {
             dialEmergencyCall(address, clirMode, result);
             return;
         }
 
-        // Everything below comes from super class
         RILRequest rr = RILRequest.obtain(RIL_REQUEST_DIAL, result);
         rr.mParcel.writeString(address);
         rr.mParcel.writeInt(clirMode);
@@ -414,6 +411,49 @@ public class SamsungExynos4RIL extends RIL implements CommandsInterface {
         send(rr);
     }
 
+    @Override
+    protected void
+    processUnsolicited (Parcel p) {
+        int dataPosition = p.dataPosition();
+        int response = p.readInt();
+
+        switch(response) {
+            case RIL_UNSOL_STK_PROACTIVE_COMMAND: 
+                Object ret = responseString(p);
+                if (RILJ_LOGD) unsljLogRet(response, ret);
+
+                if (mCatProCmdRegistrant != null) {
+                    mCatProCmdRegistrant.notifyRegistrant(
+                            new AsyncResult (null, ret, null));
+                } else {
+                    // The RIL will send a CAT proactive command before the
+                    // registrant is registered. Buffer it to make sure it
+                    // does not get ignored (and breaks CatService).
+                    mCatProCmdBuffer = ret;
+                }
+                break;
+
+            default:
+                // Rewind the Parcel
+                p.setDataPosition(dataPosition);
+
+                // Forward responses that we are not overriding to the super class
+                super.processUnsolicited(p);
+                return;
+        }
+
+    }
+
+    @Override
+    public void setOnCatProactiveCmd(Handler h, int what, Object obj) {
+        mCatProCmdRegistrant = new Registrant (h, what, obj);
+        if (mCatProCmdBuffer != null) {
+            mCatProCmdRegistrant.notifyRegistrant(
+                                new AsyncResult (null, mCatProCmdBuffer, null));
+            mCatProCmdBuffer = null;
+        }
+    }
+
     private void
     constructGsmSendSmsRilRequest (RILRequest rr, String smscPDU, String pdu) {
         rr.mParcel.writeInt(2);
@@ -422,18 +462,20 @@ public class SamsungExynos4RIL extends RIL implements CommandsInterface {
     }
 
     /**
-    * The RIL can't handle the RIL_REQUEST_SEND_SMS_EXPECT_MORE
-    * request properly, so we use RIL_REQUEST_SEND_SMS instead.
-    */
+     * The RIL can't handle the RIL_REQUEST_SEND_SMS_EXPECT_MORE
+     * request properly, so we use RIL_REQUEST_SEND_SMS instead.
+     */
     @Override
     public void
     sendSMSExpectMore (String smscPDU, String pdu, Message result) {
         RILRequest rr
                 = RILRequest.obtain(RIL_REQUEST_SEND_SMS, result);
+
         constructGsmSendSmsRilRequest(rr, smscPDU, pdu);
 
         if (RILJ_LOGD) riljLog(rr.serialString() + "> " + requestToString(rr.mRequest));
 
         send(rr);
     }
+
 }
