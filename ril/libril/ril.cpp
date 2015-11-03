@@ -67,6 +67,7 @@ namespace android {
 
 
 #define PROPERTY_RIL_IMPL "gsm.version.ril-impl"
+#define PROPERTY_QAN_ELEMENTS "ro.ril.qanelements"
 
 // match with constant in RIL.java
 #define MAX_COMMAND_BYTES (8 * 1024)
@@ -2131,7 +2132,7 @@ sendResponseRaw (const void *data, size_t dataSize, RIL_SOCKET_ID socket_id) {
     uint32_t header;
     pthread_mutex_t * writeMutexHook = &s_writeMutex;
 
-    RLOGE("Send Response to %s", rilSocketIdToString(socket_id));
+    RLOGD("Send Response to %s", rilSocketIdToString(socket_id));
 
 #if (SIM_COUNT >= 2)
     if (socket_id == RIL_SOCKET_2) {
