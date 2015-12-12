@@ -67,7 +67,7 @@ namespace android {
 
 
 #define PROPERTY_RIL_IMPL "gsm.version.ril-impl"
-#define PROPERTY_QAN_ELEMENTS "ro.ril.qanelements"
+#define PROPERTY_QAN_ELEMENTS "ro.ril.telephony.mqanelements"
 
 // match with constant in RIL.java
 #define MAX_COMMAND_BYTES (8 * 1024)
