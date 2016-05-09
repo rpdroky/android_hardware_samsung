@@ -278,8 +278,8 @@ int init_frame_buffer_locked(struct private_module_t* module)
 
     int refreshRate = 1000000000000000LLU /
     (
-        uint64_t( info.upper_margin + info.lower_margin + info.yres + info.vsync_len)
-        * ( info.left_margin  + info.right_margin + info.xres + info.hsync_len)
+        uint64_t( info.upper_margin + info.lower_margin + info.vsync_len + info.yres )
+        * ( info.left_margin  + info.right_margin + info.hsync_len + info.xres )
         * info.pixclock
     );
 
