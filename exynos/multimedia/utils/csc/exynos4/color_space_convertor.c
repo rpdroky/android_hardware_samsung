@@ -30,7 +30,6 @@
 
 #include "stdio.h"
 #include "stdlib.h"
-#include "string.h"
 #include "color_space_convertor.h"
 
 /*
